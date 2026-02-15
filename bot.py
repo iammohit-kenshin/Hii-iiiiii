@@ -1,20 +1,27 @@
 import os
-import asyncio
+import json
 import yt_dlp
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-# ================== CONFIG ==================
+# ============== CONFIG ==============
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
-LOG_CHANNEL = int(os.getenv("LOG_CHANNEL"))  # Private group ID (for cache)
 
 DOWNLOAD_PATH = "downloads/"
+CACHE_FILE = "cache.json"
+
 os.makedirs(DOWNLOAD_PATH, exist_ok=True)
 
-# ================== BOT ==================
+# Load cache
+if os.path.exists(CACHE_FILE):
+    with open(CACHE_FILE, "r") as f:
+        cache = json.load(f)
+else:
+    cache = {}
+
+# ============== BOT ==============
 app = Client(
     "VideoDownloaderBot",
     api_id=API_ID,
@@ -22,17 +29,15 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-# ================== START ==================
+# ============== START ==============
 @app.on_message(filters.command("start"))
 async def start(_, message: Message):
     await message.reply_text(
-        "👋 Hello Bro!\n\n"
-        "Send me any video link.\n"
-        "I will download & send video directly 😎"
+        "👋 Send any video link.\nI will download it for you 😎"
     )
 
-# ================== DOWNLOAD FUNCTION ==================
-async def download_video(url, msg):
+# ============== DOWNLOAD ==============
+async def download_video(url, msg, user_id):
     try:
         await msg.edit("⏳ Downloading...")
 
@@ -40,46 +45,33 @@ async def download_video(url, msg):
             "format": "best",
             "outtmpl": f"{DOWNLOAD_PATH}%(title)s.%(ext)s",
             "noplaylist": True,
-            "writethumbnail": True,
             "quiet": True,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             file_path = ydl.prepare_filename(info)
-            thumb = None
-
-            # Thumbnail check
-            thumb_path = file_path.rsplit(".", 1)[0] + ".jpg"
-            if os.path.exists(thumb_path):
-                thumb = thumb_path
 
         await msg.edit("📤 Uploading...")
 
         sent = await app.send_video(
-            chat_id=LOG_CHANNEL,
+            chat_id=user_id,
             video=file_path,
-            thumb=thumb,
-            caption=f"Cached Video\n\n{url}"
-        )
-
-        await app.send_video(
-            chat_id=msg.chat.id,
-            video=sent.video.file_id,
             caption="✅ Here is your video!"
         )
 
-        await msg.delete()
+        # Save in cache
+        cache[url] = sent.video.file_id
+        with open(CACHE_FILE, "w") as f:
+            json.dump(cache, f)
 
-        # Auto delete local file
         os.remove(file_path)
-        if thumb and os.path.exists(thumb):
-            os.remove(thumb)
+        await msg.delete()
 
     except Exception as e:
         await msg.edit(f"❌ Error:\n{str(e)}")
 
-# ================== LINK HANDLER ==================
+# ============== HANDLE LINK ==============
 @app.on_message(filters.text & ~filters.command(["start"]))
 async def handle_link(_, message: Message):
     url = message.text.strip()
@@ -90,17 +82,16 @@ async def handle_link(_, message: Message):
     msg = await message.reply_text("🔍 Checking...")
 
     # Check cache
-    async for m in app.get_chat_history(LOG_CHANNEL):
-        if m.caption and url in m.caption:
-            await msg.edit("⚡ Found in Cache! Sending...")
-            await message.reply_video(
-                m.video.file_id,
-                caption="⚡ From Cache!"
-            )
-            await msg.delete()
-            return
+    if url in cache:
+        await msg.edit("⚡ From Cache!")
+        await message.reply_video(
+            cache[url],
+            caption="⚡ Cached Video!"
+        )
+        await msg.delete()
+        return
 
-    await download_video(url, msg)
+    await download_video(url, msg, message.chat.id)
 
-# ================== RUN ==================
+# ============== RUN ==============
 app.run()
