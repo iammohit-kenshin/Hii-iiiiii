@@ -1,6 +1,5 @@
 import os
 import time
-import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from config import *
@@ -16,7 +15,7 @@ app = Client(
 
 os.makedirs(DOWNLOAD_PATH, exist_ok=True)
 
-# Upload Progress Bar
+# Upload Progress
 async def progress(current, total, message, start_time):
     now = time.time()
     diff = now - start_time
@@ -24,19 +23,22 @@ async def progress(current, total, message, start_time):
     speed = current / diff if diff > 0 else 0
 
     bar = "█" * int(percentage / 5)
-    await message.edit_text(
-        f"📤 Uploading...\n"
-        f"[{bar}]\n"
-        f"{percentage:.2f}%\n"
-        f"Speed: {speed/1024/1024:.2f} MB/s"
-    )
 
-# Start command (Deep Link supported)
+    try:
+        await message.edit_text(
+            f"📤 Uploading...\n"
+            f"[{bar}]\n"
+            f"{percentage:.2f}%\n"
+            f"Speed: {speed/1024/1024:.2f} MB/s"
+        )
+    except:
+        pass
+
+
 @app.on_message(filters.command("start"))
 async def start(client, message):
     if len(message.command) > 1:
         url = message.command[1]
-        await message.reply_text(f"🔗 Processing: {url}")
         await handle_download(client, message, url)
     else:
         await message.reply_text(
@@ -44,16 +46,18 @@ async def start(client, message):
             "Send me a public video link."
         )
 
-# Handle normal links
+
 @app.on_message(filters.text & ~filters.command(["start"]))
 async def normal_handler(client, message):
     url = message.text.strip()
     await handle_download(client, message, url)
 
+
 async def handle_download(client, message: Message, url: str):
+
     status = await message.reply_text("🔍 Checking cache...")
 
-    # Check cache
+    # Check Cache
     cached = get_cached(url)
     if cached:
         await status.edit("⚡ Sending from cache...")
@@ -64,14 +68,14 @@ async def handle_download(client, message: Message, url: str):
         )
         return
 
-    await status.edit("⬇ Extracting video info...")
+    await status.edit("⬇ Extracting & Downloading...")
 
     ydl_opts = {
         "format": "bestvideo+bestaudio/best",
+        "merge_output_format": "mp4",
         "outtmpl": f"{DOWNLOAD_PATH}%(title)s.%(ext)s",
         "noplaylist": True,
         "writethumbnail": True,
-        "concurrent_fragment_downloads": 5,
         "quiet": True
     }
 
@@ -80,8 +84,8 @@ async def handle_download(client, message: Message, url: str):
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
 
-            thumbnail = None
             base = os.path.splitext(filename)[0]
+            thumbnail = None
             for ext in ["jpg", "png", "webp"]:
                 if os.path.exists(base + "." + ext):
                     thumbnail = base + "." + ext
@@ -103,7 +107,7 @@ async def handle_download(client, message: Message, url: str):
         progress_args=(status, start_time)
     )
 
-    # Save in storage group
+    # Save in Storage Group
     storage_msg = await client.copy_message(
         chat_id=STORAGE_GROUP_ID,
         from_chat_id=message.chat.id,
@@ -112,7 +116,7 @@ async def handle_download(client, message: Message, url: str):
 
     save_cache(url, storage_msg.id)
 
-    # Delete local files (Auto delete)
+    # Auto Delete
     try:
         os.remove(filename)
         if thumbnail and os.path.exists(thumbnail):
@@ -121,5 +125,6 @@ async def handle_download(client, message: Message, url: str):
         pass
 
     await status.edit("✅ Done & Cached Successfully!")
+
 
 app.run()
