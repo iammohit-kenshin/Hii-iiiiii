@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -15,7 +16,15 @@ app = Client(
 
 os.makedirs(DOWNLOAD_PATH, exist_ok=True)
 
-# Upload Progress
+
+# 🔎 Extract only real URL from message
+def extract_url(text):
+    url_pattern = r'(https?://[^\s]+)'
+    match = re.search(url_pattern, text)
+    return match.group(1) if match else None
+
+
+# 📤 Upload Progress
 async def progress(current, total, message, start_time):
     now = time.time()
     diff = now - start_time
@@ -48,8 +57,14 @@ async def start(client, message):
 
 
 @app.on_message(filters.text & ~filters.command(["start"]))
-async def normal_handler(client, message):
-    url = message.text.strip()
+async def normal_handler(client, message: Message):
+
+    url = extract_url(message.text)
+
+    if not url:
+        await message.reply_text("❌ Please send a valid video link.")
+        return
+
     await handle_download(client, message, url)
 
 
@@ -57,7 +72,7 @@ async def handle_download(client, message: Message, url: str):
 
     status = await message.reply_text("🔍 Checking cache...")
 
-    # Check Cache
+    # Cache Check
     cached = get_cached(url)
     if cached:
         await status.edit("⚡ Sending from cache...")
@@ -68,7 +83,7 @@ async def handle_download(client, message: Message, url: str):
         )
         return
 
-    await status.edit("⬇ Extracting & Downloading...")
+    await status.edit("⬇ Downloading video...")
 
     ydl_opts = {
         "format": "bestvideo+bestaudio/best",
@@ -76,7 +91,8 @@ async def handle_download(client, message: Message, url: str):
         "outtmpl": f"{DOWNLOAD_PATH}%(title)s.%(ext)s",
         "noplaylist": True,
         "writethumbnail": True,
-        "quiet": True
+        "quiet": True,
+        "nocheckcertificate": True
     }
 
     try:
@@ -92,7 +108,7 @@ async def handle_download(client, message: Message, url: str):
                     break
 
     except Exception as e:
-        await status.edit(f"❌ Error:\n{str(e)}")
+        await status.edit(f"❌ Download Error:\n{str(e)}")
         return
 
     await status.edit("📤 Uploading to Telegram...")
@@ -107,7 +123,7 @@ async def handle_download(client, message: Message, url: str):
         progress_args=(status, start_time)
     )
 
-    # Save in Storage Group
+    # Save to storage group
     storage_msg = await client.copy_message(
         chat_id=STORAGE_GROUP_ID,
         from_chat_id=message.chat.id,
@@ -116,7 +132,7 @@ async def handle_download(client, message: Message, url: str):
 
     save_cache(url, storage_msg.id)
 
-    # Auto Delete
+    # Auto delete local files
     try:
         os.remove(filename)
         if thumbnail and os.path.exists(thumbnail):
@@ -124,7 +140,7 @@ async def handle_download(client, message: Message, url: str):
     except:
         pass
 
-    await status.edit("✅ Done & Cached Successfully!")
+    await status.edit("✅ Done & Cached!")
 
 
 app.run()
